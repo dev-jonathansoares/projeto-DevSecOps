@@ -1,0 +1,99 @@
+pipeline {
+  agent any
+  environment {
+    IMAGE_NAME = "secure-pyapp"
+    IMAGE_TAG  = "local"
+    REGISTRY   = credentials('docker-registry') // username/password or token
+    SONAR_HOST_URL = credentials('sonar-host-url')
+    SONAR_TOKEN    = credentials('sonar-token')
+  }
+  stages {
+    stage('Checkout') {
+      steps {
+        checkout scm
+      }
+    }
+    stage('Python Lint & Test') {
+      steps {
+        sh '''
+          python3 -m venv .venv
+          . .venv/bin/activate
+          pip install -r app/requirements.txt
+          flake8 app
+          pytest -q app/tests
+        '''
+      }
+      post {
+        always {
+          junit allowEmptyResults: true, testResults: 'pytest.xml'
+        }
+      }
+    }
+    stage('SAST (Bandit)') {
+      steps {
+        sh '. .venv/bin/activate && bandit -c app/bandit.yaml -r app -f txt -o bandit.txt || true'
+        archiveArtifacts artifacts: 'bandit.txt', allowEmptyArchive: true
+      }
+    }
+    stage('Build Docker Image') {
+      steps {
+        sh 'docker build -t ${IMAGE_NAME}:${IMAGE_TAG} app'
+      }
+    }
+    stage('SCA (Trivy)') {
+      steps {
+        sh 'security/trivy_scan.sh ${IMAGE_NAME}:${IMAGE_TAG}'
+      }
+    }
+    stage('SonarQube Analysis') {
+      steps {
+        withSonarQubeEnv('SonarQubeServer') {
+          sh '''
+            . .venv/bin/activate
+            pip install sonar-scanner-cli-python==0.0.5 || true
+            sonar-scanner               -Dsonar.projectBaseDir=app               -Dsonar.host.url=$SONAR_HOST_URL               -Dsonar.login=$SONAR_TOKEN
+          '''
+        }
+      }
+    }
+    stage('DAST (OWASP ZAP Baseline)') {
+      steps {
+        sh '''
+          docker compose up -d app
+          sleep 5
+          ./security/zap_baseline.sh http://localhost:5001
+        '''
+        archiveArtifacts artifacts: 'zap_report.html', allowEmptyArchive: true
+      }
+      post {
+        always {
+          sh 'docker compose down'
+        }
+      }
+    }
+    stage('Push (optional)') {
+      when { expression { return false } } // set to true and configure Docker registry to push
+      steps {
+        sh '''
+          echo "$REGISTRY_PSW" | docker login -u "$REGISTRY_USR" --password-stdin
+          docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${REGISTRY_USR}/${IMAGE_NAME}:${BUILD_NUMBER}
+          docker push ${REGISTRY_USR}/${IMAGE_NAME}:${BUILD_NUMBER}
+        '''
+      }
+    }
+    stage('Deploy to OpenShift (manual)') {
+      when { expression { return false } }
+      steps {
+        sh '''
+          oc apply -f openshift/namespace.yaml || true
+          oc apply -f openshift/
+        '''
+      }
+    }
+  }
+  post {
+    always {
+      archiveArtifacts artifacts: 'bandit.txt, zap_report.html', allowEmptyArchive: true
+    }
+  }
+}

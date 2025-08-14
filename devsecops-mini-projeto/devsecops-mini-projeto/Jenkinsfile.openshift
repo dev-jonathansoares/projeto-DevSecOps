@@ -1,0 +1,107 @@
+pipeline {
+  agent {
+    kubernetes {
+      yaml '''
+apiVersion: v1
+kind: Pod
+spec:
+  serviceAccountName: jenkins
+  containers:
+    - name: python
+      image: python:3.12-slim
+      command: ['cat']
+      tty: true
+    - name: oc
+      image: quay.io/openshift/origin-cli:4.14
+      command: ['sleep','infinity']
+      tty: true
+    - name: zap
+      image: owasp/zap2docker-stable
+      command: ['sleep','infinity']
+      tty: true
+'''
+    }
+  }
+  environment {
+    NS = "devsecops-demo"
+  }
+  stages {
+    stage('Checkout') {
+      steps { checkout scm }
+    }
+    stage('Lint & Unit Tests (pytest)') {
+      steps {
+        container('python') {
+          dir('app') {
+            sh '''
+              python -m venv .venv
+              . .venv/bin/activate
+              pip install -r requirements.txt
+              flake8 .
+              pytest -q --disable-warnings --maxfail=1
+            '''
+          }
+        }
+      }
+    }
+    stage('SAST (Bandit)') {
+      steps {
+        container('python') {
+          dir('app') {
+            sh '''
+              . .venv/bin/activate || { python -m venv .venv && . .venv/bin/activate; }
+              pip install bandit==1.7.9
+              bandit -r . -f txt -o ../bandit.txt || true
+            '''
+          }
+        }
+      }
+      post { always { archiveArtifacts artifacts: 'bandit.txt', allowEmptyArchive: true } }
+    }
+    stage('Prepare OpenShift resources') {
+      steps {
+        container('oc') {
+          sh '''
+            oc project ${NS} || oc new-project ${NS}
+            oc apply -f openshift/app.yaml -n ${NS}
+          '''
+        }
+      }
+    }
+    stage('Build (Binary Docker) in OpenShift') {
+      steps {
+        container('oc') {
+          sh '''
+            oc start-build secure-pyapp --from-dir=app --follow -n ${NS}
+          '''
+        }
+      }
+    }
+    stage('Deploy & Rollout') {
+      steps {
+        container('oc') {
+          sh '''
+            oc rollout status dc/secure-pyapp -n ${NS} --watch --timeout=3m
+            oc get route secure-pyapp -n ${NS} -o jsonpath='{.spec.host}' > route_host.txt
+          '''
+        }
+        script {
+          env.APP_HOST = readFile('route_host.txt').trim()
+          echo "App route host: ${env.APP_HOST}"
+        }
+      }
+    }
+    stage('DAST (ZAP Baseline) - smoke') {
+      steps {
+        container('zap') {
+          sh '''
+            export TARGET="https://${APP_HOST}"
+            echo "ZAP baseline scanning $TARGET"
+            zap-baseline.py -t "$TARGET" -r zap_report.html || true
+          '''
+        }
+      }
+      post { always { archiveArtifacts artifacts: 'zap_report.html', allowEmptyArchive: true } }
+    }
+  }
+}

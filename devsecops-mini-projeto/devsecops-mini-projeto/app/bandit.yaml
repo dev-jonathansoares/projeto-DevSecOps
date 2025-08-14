@@ -1,0 +1,5 @@
+# Bandit config for basic scanning
+skips: []
+exclude_dirs:
+  - tests
+  - venv

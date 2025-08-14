@@ -1,0 +1,15 @@
+{
+  "title": "Secure PyApp Overview",
+  "timezone": "browser",
+  "panels": [
+    {
+      "type": "graph",
+      "title": "HTTP Requests Total",
+      "targets": [
+        { "expr": "secure_pyapp_requests_total", "legendFormat": "{{endpoint}}" }
+      ]
+    }
+  ],
+  "schemaVersion": 37,
+  "version": 1
+}

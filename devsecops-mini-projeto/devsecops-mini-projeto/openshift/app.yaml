@@ -1,0 +1,102 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: devsecops-demo
+---
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: secure-pyapp
+  namespace: devsecops-demo
+spec: {}
+---
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: secure-pyapp
+  namespace: devsecops-demo
+spec:
+  source:
+    type: Binary
+    binary: {}
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: Dockerfile
+  output:
+    to:
+      kind: ImageStreamTag
+      name: secure-pyapp:latest
+  triggers: []
+---
+apiVersion: apps.openshift.io/v1
+kind: DeploymentConfig
+metadata:
+  name: secure-pyapp
+  namespace: devsecops-demo
+spec:
+  replicas: 2
+  selector:
+    app: secure-pyapp
+  strategy:
+    type: Rolling
+  template:
+    metadata:
+      labels:
+        app: secure-pyapp
+    spec:
+      containers:
+        - name: app
+          image: ""
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5001
+          env:
+            - name: APP_MESSAGE
+              value: "Hello from OpenShift!"
+          readinessProbe:
+            httpGet: { path: /health, port: 5001 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /health, port: 5001 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+  triggers:
+    - type: ImageChange
+      imageChangeParams:
+        automatic: true
+        containerNames: ["app"]
+        from:
+          kind: ImageStreamTag
+          name: secure-pyapp:latest
+          namespace: devsecops-demo
+    - type: ConfigChange
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: secure-pyapp
+  namespace: devsecops-demo
+spec:
+  selector:
+    app: secure-pyapp
+  ports:
+    - name: http
+      port: 80
+      targetPort: 5001
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: secure-pyapp
+  namespace: devsecops-demo
+spec:
+  to:
+    kind: Service
+    name: secure-pyapp
+  port:
+    targetPort: http
+  tls:
+    termination: edge

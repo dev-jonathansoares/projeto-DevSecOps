@@ -1,0 +1,96 @@
+name: devsecops-mini-project
+networks:
+  devsecops_net:
+
+volumes:
+  jenkins_home:
+  sonar_data:
+  sonar_extensions:
+  prom_data:
+  grafana_data:
+  vault_data:
+
+services:
+  app:
+    build: ./app
+    image: secure-pyapp:local
+    container_name: secure-pyapp
+    environment:
+      - APP_MESSAGE=Eai docker compose
+      - VAULT_ADDR=http://vault:8200
+      - VAULT_TOKEN=root
+      - VAULT_MOUNT=secret
+    ports:
+      - "5001:5001"
+    networks: [devsecops_net]
+    profiles: ["core"]
+
+  jenkins:
+    image: jenkins/jenkins:lts
+    container_name: jenkins
+    user: "0:0"
+    ports:
+      - "8090:8080"
+      - "50000:50000"
+    volumes:
+      - jenkins_home:/var/jenkins_home
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks: [devsecops_net]
+    profiles: ["ci"]
+
+  sonarqube:
+    image: sonarqube:9.9-community
+    container_name: sonarqube
+    environment:
+      - SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true
+    ports:
+      - "9000:9000"
+    volumes:
+      - sonar_data:/opt/sonarqube/data
+      - sonar_extensions:/opt/sonarqube/extensions
+    networks: [devsecops_net]
+    profiles: ["sec"]
+
+  prometheus:
+    image: prom/prometheus
+    container_name: prometheus
+    command: ["--config.file=/etc/prometheus/prometheus.yml"]
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prom_data:/prometheus
+    ports:
+      - "9090:9090"
+    networks: [devsecops_net]
+    profiles: ["obs"]
+
+  grafana:
+    image: grafana/grafana:10.4.6
+    container_name: grafana
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    networks: [devsecops_net]
+    profiles: ["obs"]
+
+  vault:
+    image: hashicorp/vault:1.15
+    container_name: vault
+    cap_add:
+      - IPC_LOCK
+    environment:
+      - VAULT_DEV_ROOT_TOKEN_ID=root
+      - VAULT_DEV_LISTEN_ADDRESS=0.0.0.0:8200
+    ports:
+      - "8200:8200"
+    volumes:
+      - vault_data:/vault/file
+    networks: [devsecops_net]
+    profiles: ["sec"]
