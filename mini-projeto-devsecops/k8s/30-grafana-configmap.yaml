@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: grafana-provisioning, namespace: demo }
+data:
+  datasource.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        access: proxy
+        url: http://prometheus.demo.svc.cluster.local:9090
+        isDefault: true
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: Default
+        orgId: 1
+        folder: ""
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards
+  dashboard.json: |
+    {"schemaVersion":39,"version":1,"panels":[{"type":"graph","title":"Requests (pyapp)","targets":[{"expr":"sum by (path) (http_requests_total)"}]}]}

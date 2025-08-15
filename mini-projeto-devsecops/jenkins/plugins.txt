@@ -1,0 +1,8 @@
+configuration-as-code:1775.v810dc950b_514
+workflow-aggregator:596.v8c21c963d92d
+docker-workflow:580.vc0c340686b_54
+credentials-binding:677.vdc9d38cb_254d
+ssh-agent:383.v8dc3f1a_89ef5
+blueocean:1.27.13
+sonar:2.17
+git:5.6.0

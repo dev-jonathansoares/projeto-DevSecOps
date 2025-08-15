@@ -1,0 +1,36 @@
+jenkins:
+  systemMessage: "DevSecOps Demo - Jenkins as Code"
+  numExecutors: 2
+  mode: NORMAL
+  securityRealm:
+    local:
+      allowsSignup: false
+      users:
+        - id: "admin"
+          password: "admin"
+  authorizationStrategy:
+    loggedInUsersCanDoAnything:
+      allowAnonymousRead: false
+  remotingSecurity:
+    enabled: true
+unclassified:
+  location: { url: "http://localhost:8080/" }
+  sonarGlobalConfiguration:
+    installations:
+      - name: "sonarqube"
+        serverUrl: "http://sonarqube:9000"
+        credentialsId: "sonar-token"
+credentials:
+  system:
+    domainCredentials:
+      - credentials:
+          - string:
+              scope: GLOBAL
+              id: "sonar-token"
+              description: "SonarQube token"
+              secret: "${SONARQUBE_TOKEN}"
+tool:
+  git:
+    installations:
+      - name: Default
+        home: "git"

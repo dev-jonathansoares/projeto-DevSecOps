@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: grafana, namespace: demo }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: grafana } }
+  template:
+    metadata: { labels: { app: grafana } }
+    spec:
+      containers:
+      - name: grafana
+        image: grafana/grafana:11.1.0
+        ports: [ { containerPort: 3000 } ]
+        env:
+        - { name: GF_SECURITY_ADMIN_USER, value: admin }
+        - { name: GF_SECURITY_ADMIN_PASSWORD, value: admin }
+        volumeMounts:
+        - { name: provisioning, mountPath: /etc/grafana/provisioning/datasources, subPath: datasources }
+        - { name: dashboards, mountPath: /var/lib/grafana/dashboards }
+      volumes:
+      - name: provisioning
+        projected:
+          sources:
+          - configMap: { name: grafana-provisioning, items: [ { key: datasource.yaml, path: datasources/datasource.yaml }, { key: dashboards.yaml, path: dashboards/dashboards.yaml } ] }
+      - name: dashboards
+        projected:
+          sources:
+          - configMap: { name: grafana-provisioning, items: [ { key: dashboard.json, path: dashboard.json } ] }

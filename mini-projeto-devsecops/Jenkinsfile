@@ -1,0 +1,54 @@
+pipeline {
+  agent any
+  environment {
+    APP_NAME = "pyapp"
+    DOCKER_IMG = "pyapp:${BUILD_NUMBER}"
+    CI_NET = "ci-net"
+    SONAR_PROJECT_KEY = "devsecops-demo"
+    SONAR_PROJECT_NAME = "devsecops-demo"
+  }
+  stages {
+    stage('Checkout'){ steps { checkout scm; sh 'git log -1 --oneline || true' } }
+    stage('SAST - SonarQube'){
+      steps {
+        withSonarQubeEnv('sonarqube'){
+          sh '''
+          docker run --rm -v $PWD:/usr/src \
+            -e SONAR_HOST_URL=$SONAR_HOST_URL \
+            -e SONAR_SCANNER_OPTS="-Dsonar.projectKey=${SONAR_PROJECT_KEY} -Dsonar.projectName=${SONAR_PROJECT_NAME}" \
+            -e SONAR_LOGIN=$SONAR_AUTH_TOKEN \
+            sonarsource/sonar-scanner-cli:latest
+          '''
+        }
+      }
+    }
+    stage('Build image'){ steps { sh 'docker build -t ${DOCKER_IMG} backend' } }
+    stage('Unit tests'){
+      steps { sh 'docker run --rm -e MESSAGE=\"Hello from Tests\" ${DOCKER_IMG} sh -c \"pytest -q\"' }
+    }
+    stage('Security - OWASP ZAP Baseline'){
+      steps {
+        sh '''
+        docker network create ${CI_NET} || true
+        docker run -d --rm --name ${APP_NAME}-zaptarget --network ${CI_NET} -e MESSAGE="Hello from ZAP" -p 8000 ${DOCKER_IMG}
+        sleep 5
+        docker run --rm --name zap-baseline --network ${CI_NET} -v $PWD/tools/zap-baseline.conf:/zap/wrk/zap-baseline.conf -v $PWD:/zap/wrk \
+          owasp/zap2docker-stable zap-baseline.py -t http://${APP_NAME}-zaptarget:8000 -g gen.conf -x zap_report.xml -w zap_warnings.md || true
+        docker rm -f ${APP_NAME}-zaptarget || true
+        '''
+      }
+      post { always { archiveArtifacts artifacts: 'zap_report.xml,zap_warnings.md', onlyIfSuccessful: false } }
+    }
+    stage('Create/Load kind & Deploy to Kubernetes'){
+      steps {
+        sh '''
+        bash kind/up.sh
+        docker run --rm -v /var/run/docker.sock:/var/run/docker.sock kindest/kind:v0.23.0 load docker-image ${DOCKER_IMG} --name dev
+        bash tools/k8s-apply.sh
+        docker run --rm -v "$(pwd)/kind":/root/.kube -v "$(pwd)":/w bitnami/kubectl:1.30 --context kind-dev --kubeconfig /root/.kube/kubeconfig -n demo set image deployment/pyapp pyapp=${DOCKER_IMG}
+        docker run --rm -v "$(pwd)/kind":/root/.kube bitnami/kubectl:1.30 --context kind-dev --kubeconfig /root/.kube/kubeconfig -n demo run curl --image=curlimages/curl:8.8.0 -i --rm -q --restart=Never -- sh -lc "curl -fsS http://pyapp:8000/"
+        '''
+      }
+    }
+  }
+}

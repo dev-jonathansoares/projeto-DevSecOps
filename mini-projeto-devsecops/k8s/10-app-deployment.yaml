@@ -1,0 +1,19 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: pyapp, namespace: demo }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: pyapp } }
+  template:
+    metadata: { labels: { app: pyapp } }
+    spec:
+      containers:
+      - name: pyapp
+        image: pyapp:latest
+        imagePullPolicy: IfNotPresent
+        env:
+        - { name: VAULT_ADDR, value: "http://vault.demo.svc.cluster.local:8200" }
+        - { name: VAULT_TOKEN, value: "root" }
+        ports: [ { containerPort: 8000 } ]
+        readinessProbe: { httpGet: { path: /healthz, port: 8000 }, initialDelaySeconds: 3, periodSeconds: 5 }
+        livenessProbe: { httpGet: { path: /healthz, port: 8000 }, initialDelaySeconds: 10, periodSeconds: 10 }
