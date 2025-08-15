@@ -1,0 +1,44 @@
+version: "3.9"
+
+services:
+  jenkins:
+    build:
+      context: .
+      dockerfile: Jenkins.Dockerfile
+    container_name: hits-jenkins
+    ports:
+      - "8090:8080"     # Jenkins UI (avoid 8080 on host)
+      - "50000:50000"   # JNLP agents
+    # environment:
+    #   - JAVA_OPTS=-Djenkins.install.runSetupWizard=false
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - jenkins_home:/var/jenkins_home
+      # Optional: mount container-friendly kubeconfig after running scripts/kind-setup.sh on host
+      # - ./k8s/kubeconfig-kind-in-docker:/var/jenkins_home/.kube/config
+    networks:
+      - default
+      - kindnet
+
+  sonarqube:
+    image: sonarqube:10-community
+    container_name: hits-sonarqube
+    ports:
+      - "9000:9000"
+    environment:
+      - SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true
+    volumes:
+      - sonar_data:/opt/sonarqube/data
+      - sonar_extensions:/opt/sonarqube/extensions
+      - sonar_logs:/opt/sonarqube/logs
+
+networks:
+  kindnet:
+    external: true
+    name: kind  # Attach to kind network so Jenkins can reach control-plane by IP
+
+volumes:
+  jenkins_home:
+  sonar_data:
+  sonar_extensions:
+  sonar_logs:

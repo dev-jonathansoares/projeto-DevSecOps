@@ -1,0 +1,17 @@
+version: "3.9"
+services:
+  api:
+    build: .
+    image: hits-api:local
+    container_name: hits-api
+    ports:
+      - "5001:5001"
+    env_file:
+      - .env
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; urllib.request.urlopen('http://127.0.0.1:5001/health'); sys.exit(0)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s

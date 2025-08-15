@@ -1,0 +1,110 @@
+pipeline {
+  agent any
+  options { timestamps() }
+
+  environment {
+    IMAGE_NAME     = "hits-api"
+    KUBE_NAMESPACE = "default"
+    // SonarQube dentro do docker-compose (nome do serviço)
+    SONAR_HOST_URL = "http://hits-sonarqube:9000"
+  }
+
+  stages {
+
+    stage('Checkout (código-fonte)') {
+      steps {
+        checkout scm
+        sh 'echo "Workspace: $WORKSPACE"'
+      }
+    }
+
+    stage('Build da imagem Docker') {
+      steps {
+        sh '''
+          echo " Construindo imagem Docker..."
+          docker build -t ${IMAGE_NAME}:${BUILD_NUMBER} .
+          echo "Imagens encontradas:"
+          docker image ls | grep ${IMAGE_NAME} || true
+        '''
+      }
+    }
+
+    stage('Análise no SonarQube') {
+      environment {
+        // Credencial do Jenkins (Secret Text) com ID 'sonar-token'
+        SONAR_TOKEN = credentials('sonar-token')
+      }
+      steps {
+        sh '''
+          echo "Executando análise no SonarQube..."
+          docker run --rm \
+            -e SONAR_HOST_URL=${SONAR_HOST_URL} \
+            -e SONAR_LOGIN=${SONAR_TOKEN} \
+            -v "$WORKSPACE:/usr/src" \
+            sonarsource/sonar-scanner-cli:latest
+        '''
+      }
+    }
+
+    stage('Garantir cluster kind (dentro do Jenkins)') {
+      steps {
+        sh '''
+          set -e
+          echo "Verificando cluster kind..."
+          if ! kind get clusters | grep -q '^kind$'; then
+            echo "Criando cluster kind..."
+            kind create cluster --config k8s/kind-config.yaml --name kind
+          else
+            echo "Cluster kind já existe."
+          fi
+
+          echo "Conectando o container do Jenkins à rede 'kind' (se necessário)..."
+          docker network connect kind $(cat /etc/hostname) || true
+
+          echo "Ajustando kubeconfig para uso dentro de container..."
+          CONTROL_PLANE_IP=$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' kind-control-plane)
+          mkdir -p $HOME/.kube
+          if [ -f "$HOME/.kube/config" ]; then
+            sed "s#server: https://127.0.0.1:[0-9]*#server: https://${CONTROL_PLANE_IP}:6443#g" \
+              "$HOME/.kube/config" > "$HOME/.kube/config.docker"
+          fi
+          export KUBECONFIG=$HOME/.kube/config.docker
+          kubectl cluster-info
+        '''
+      }
+    }
+
+    stage('Carregar imagem no kind e implantar no Kubernetes') {
+      steps {
+        sh '''
+          set -e
+          export KUBECONFIG=$HOME/.kube/config.docker
+
+          echo "Carregando imagem no kind..."
+          kind load docker-image ${IMAGE_NAME}:${BUILD_NUMBER}
+
+          echo "Aplicando manifests (Deployment e Service)..."
+          kubectl apply -f k8s/deployment.yaml -f k8s/service.yaml
+
+          echo "Atualizando imagem do Deployment para a tag do build..."
+          kubectl -n ${KUBE_NAMESPACE} set image deployment/hits-api api=${IMAGE_NAME}:${BUILD_NUMBER} --record=true || true
+
+          echo "Aguardando rollout..."
+          kubectl -n ${KUBE_NAMESPACE} rollout status deployment/hits-api --timeout=120s
+        '''
+      }
+    }
+  }
+
+  post {
+    success {
+      echo 'Pipeline finalizado com sucesso.'
+    }
+    failure {
+      echo 'Pipeline falhou. Verifique os logs das stages acima.'
+    }
+    always {
+      sh 'echo "Top 20 imagens locais:"; docker images | head -n 20 || true'
+    }
+  }
+}
